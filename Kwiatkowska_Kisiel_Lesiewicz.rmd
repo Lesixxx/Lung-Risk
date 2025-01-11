@@ -1,0 +1,580 @@
+***Załadowanie potrzebnych bibliotek***
+```{r}
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(vcd)
+library(car)
+library(VIM)
+library(readxl)
+library(tidyverse)
+library(RColorBrewer)
+library(lmtest)
+library(naniar)
+library(gridExtra)
+library(pscl)
+library(pROC)
+library(gridExtra)
+```
+
+***Załadowanie zbioru danych***
+```{r}
+dane <- read.csv("survey lung cancer(2).csv")
+dane<-as.data.frame(dane)
+summary(dane)
+```
+
+##Analiza wstępna
+
+###Przekształcenie zmiennych 
+```{r}
+dane$GENDER <- ifelse(dane$GENDER == "M", 1, 0)
+dane$SMOKING <- ifelse(dane$SMOKING == 2, 1, 0)
+dane$YELLOW_FINGERS <- ifelse(dane$YELLOW_FINGERS == 2, 1, 0)
+dane$ANXIETY <- ifelse(dane$ANXIETY == 2, 1, 0)
+dane$PEER_PRESSURE <- ifelse(dane$PEER_PRESSURE == 2, 1, 0)
+dane$CHRONIC.DISEASE <- ifelse(dane$CHRONIC.DISEASE == 2, 1, 0)
+dane$FATIGUE <- ifelse(dane$FATIGUE == 2, 1, 0)
+dane$ALLERGY <- ifelse(dane$ALLERGY == 2, 1, 0)
+dane$WHEEZING <- ifelse(dane$WHEEZING == 2, 1, 0)
+dane$ALCOHOL.CONSUMING<- ifelse(dane$ALCOHOL.CONSUMING == 2, 1, 0)
+dane$COUGHING <- ifelse(dane$COUGHING == 2, 1, 0)
+dane$SHORTNESS.OF.BREATH<- ifelse(dane$SHORTNESS.OF.BREATH == 2, 1, 0)
+dane$SWALLOWING.DIFFICULTY <- ifelse(dane$SWALLOWING.DIFFICULTY == 2, 1, 0)
+dane$CHEST.PAIN<- ifelse(dane$CHEST.PAIN== 2, 1, 0)
+dane$LUNG_CANCER <- ifelse(dane$LUNG_CANCER == "YES", 1, 0)
+```
+
+```{r}
+dane$GENDER <- as.factor(dane$GENDER)
+dane$SMOKING <- as.factor(dane$SMOKING)
+dane$YELLOW_FINGERS <- as.factor(dane$YELLOW_FINGERS)
+dane$ANXIETY <- as.factor(dane$ANXIETY)
+dane$PEER_PRESSURE <- as.factor(dane$PEER_PRESSURE)
+dane$CHRONIC.DISEASE <- as.factor(dane$CHRONIC.DISEASE)
+dane$FATIGUE <- as.factor(dane$FATIGUE)
+dane$ALLERGY <- as.factor(dane$ALLERGY)
+dane$WHEEZING <- as.factor(dane$WHEEZING)
+dane$ALCOHOL.CONSUMING <- as.factor(dane$ALCOHOL.CONSUMING)
+dane$COUGHING <- as.factor(dane$COUGHING)
+dane$SHORTNESS.OF.BREATH <- as.factor(dane$SHORTNESS.OF.BREATH)
+dane$SWALLOWING.DIFFICULTY <- as.factor(dane$SWALLOWING.DIFFICULTY)
+dane$CHEST.PAIN <- as.factor(dane$CHEST.PAIN)
+dane$LUNG_CANCER <- as.factor(dane$LUNG_CANCER)
+summary(dane)
+```
+
+###Braki danych 
+```{r}
+plot_missing<-aggr(dane, col=c('purple','lightblue'),
+                   numbers=TRUE, sortVars=TRUE,
+                   labels=names(dane), cex.axis=0.6,
+                   cex.lab=1.5,
+                   gap=1, ylab=c('Braki',"Wzór braków"))
+```
+
+W zbiorze nie występują braki danych zatem nie ma potrzeby zastosowania technik imputacji danych. 
+
+###Analiza wartości skrajnych
+Analizę wartości skrajnych przeprowadzamy dla zmiennej AGE, gdyż jest to jedyna zmienna ilościowa w naszym zbiorze. 
+```{r}
+par(mfrow = c(1, 3))
+
+hist(dane$AGE, main = "Histogram of Age", col = "skyblue", border = "white")
+boxplot(dane$AGE, main = "Boxplot of Age", col = "lightgreen", border = "darkgreen")
+qqnorm(dane$AGE, main = "Normal Q-Q Plot of Age")
+qqline(dane$AGE, col = "red")
+
+par(mfrow = c(1, 1))
+
+quantile(dane$AGE, c(0.95, 0.99))
+```
+Na wykresie widzimy, iż występują dwie waartości skrajne, decyzję o ich usunięciu lub pozostawieniu podejmiemy w dalszych etapach podczas budowy modelu. 
+
+###Analiza korelacji 
+Pierwszym etapem w przypaku badania korelacji jest zazwyczaj zbudowanie klasycznej macierzy korelacji, jednak macierz korelacji obliczana na podstawie współczynnika korelacji Pearsona liczona jest dla objaśniających zmiennych ilościowych. W przypadku badanego zbioru danych jedyną zmienną ilościową jest wiek, bez uzasadnienia merytorycznego, będzie więc budowanie macierzy korelacji dla jednej zmiennej. 
+
+***Macierz V Cramera***
+Po przeprowadzeniu dokładnej analizy merytorycznej zmiennych objaśniających zawartych w bazie danych doszliśmy do wniosku, że wszystkie zmienne objaśniające mają bardzo duży wpyły na prawdopodobieństwo wystąpenia raka płuc i dobrze opisują rozważany problem. Nie zdecydowano się na usunięcie której kolwiek ze zmiennych ze względu na brak sensu merytorycznego.
+
+Aby jednak sprawdzić czy któreś ze zmiennych nie korelują ze sobą zbytnio, psując przy tym jakość predykcji dokonano analizy zmienych przy pomocy współczynnika kontyngencji. Ponieważ wszystkie zmienne objaśniające poza zmienną wiek są jakościowe(opisane w skali dychotomicznej) to zastosowano współczynniki kontyngencji, np. V Cramera - silna korelacja, gdy $V > 0.5$.
+
+```{r}
+# Zmiana zmiennych na "czynniki"
+dane1 <-dane[,c("GENDER", "SMOKING", "YELLOW_FINGERS", "ANXIETY", "PEER_PRESSURE","CHRONIC.DISEASE", "FATIGUE", "ALLERGY", "WHEEZING","ALCOHOL.CONSUMING", "COUGHING","SHORTNESS.OF.BREATH", "SWALLOWING.DIFFICULTY", "CHEST.PAIN")] 
+
+# Funkcja licząca współczynnik  V-Cramera
+compute_cramer_v <- function(dane1) {
+  contingency_table <- xtabs(~., dane1)
+  return(assocstats(contingency_table)$cramer)
+}
+ 
+# Stworzenie macierzy w w którą będzie można wstawić wyniki z testu V-Cramera
+num_vars <- ncol(dane1)
+cramer_matrix <- matrix(0, nrow = num_vars, ncol = num_vars, dimnames = list(names(dane1), names(dane1)))
+ 
+# Obliczenie współczynnika V-Cramera dla par wszytskich zmiennych
+for (i in 1:(num_vars - 1)) {
+  for (j in (i + 1):num_vars) {
+    pairwise_data <- dane1[, c(i, j)]
+    cramer_matrix[i, j] <- compute_cramer_v(pairwise_data)
+    cramer_matrix[j, i] <- cramer_matrix[i, j] # Since it's symmetric, fill both sides of the matrix
+  }
+}
+title <- "Macierz Craméra dla zmiennych kategorialnych"
+cat(paste0("\n", title, "\n\n"))
+print(cramer_matrix)
+corrplot(cramer_matrix, method = "color")
+```
+
+```{r}
+table(dane$YELLOW_FINGERS,dane$ANXIETY)
+assocstats(table(dane$YELLOW_FINGERS, dane$ANXIETY))
+```
+
+Z wykresu można zauważyć, że wśród zmiennych nie występują za silne korelacje, jedynie dla zmiennej ANXIETY i "YELLOW_FINGERS" korelacja występuje na poziomo około 57%, co sugeruje usunięcie jednej ze zmiennych. Zdecydowano więc na usunięcie zmiennej "YELLOW_FINGERS", ponieważ z badań medycznych wiadomo, że stres oraz poczucie lęku moze często być zapalnikiem różnych chorób, co w przypadku zachorowania na raka płuc, może okazać się ważną informacją. Natomiast w zbiorze występuje również zmienna wyjaśniająca czy dany pacjent pali czy nie pali, co pokrywa się z informacją o żółtych palcach, ponieważ niekiedy są one bezpośrednią konsekwencją palenia. Stworzono więc zbiór danych bez zmiennej "YELLOW_FINGERS" w celu sprawdzenia czy zmienne dalej korelują ze sobą na akceptowalnym poziomie.
+
+
+```{r}
+# Zmiana zmiennych na "czynniki"
+dane1 <-dane[,c("GENDER", "SMOKING", "ANXIETY", "PEER_PRESSURE","CHRONIC.DISEASE", "FATIGUE", "ALLERGY", "WHEEZING","ALCOHOL.CONSUMING", "COUGHING","SHORTNESS.OF.BREATH", "SWALLOWING.DIFFICULTY", "CHEST.PAIN")] 
+
+# Funkcja licząca współczynnik  V-Cramera
+compute_cramer_v <- function(dane1) {
+  contingency_table <- xtabs(~., dane1)
+  return(assocstats(contingency_table)$cramer)
+}
+ 
+# Stworzenie macierzy w w którą będzie można wstawić wyniki z testu V-Cramera
+num_vars <- ncol(dane1)
+cramer_matrix <- matrix(0, nrow = num_vars, ncol = num_vars, dimnames = list(names(dane1), names(dane1)))
+ 
+# Obliczenie współczynnika V-Cramera dla par wszytskich zmiennych
+for (i in 1:(num_vars - 1)) {
+  for (j in (i + 1):num_vars) {
+    pairwise_data <- dane1[, c(i, j)]
+    cramer_matrix[i, j] <- compute_cramer_v(pairwise_data)
+    cramer_matrix[j, i] <- cramer_matrix[i, j] # Since it's symmetric, fill both sides of the matrix
+  }
+}
+title <- "Macierz Craméra dla zmiennych kategorialnych bez zmiennej YELLOW_FINGERS"
+cat(paste0("\n", title, "\n\n"))
+print(cramer_matrix)
+corrplot(cramer_matrix, method = "color")
+```
+Analizując wyniki na wykresie typu 'corrplot' można przypuszczać, że w utworzonym zbiorze danych nie występują zmienne które ze sobą nazbyt korelują. Ponadto analizując tablicę współczynników Cramera mamy już pewność, że nie występują korelację, które zakłucałyby wiarygodność wyników, czy też pogorszały jakość predykcji.
+
+Test Kołmogorowa-Smirnowa w kontekście dwóch zmiennych dychotomicznych nie ma bezpośredniego sensu. Test ten jest używany do porównywania rozkładów dwóch grup liczbowych lub ciągłych. Zmienna dychotomiczna przyjmuje tylko dwie możliwe wartości (np. 0 lub 1), co nie pozwala na zastosowanie tego testu w bezpośredni sposób.
+
+Aby porównać dwie zmienne dychotomiczne które mają jedne z wyższych wyników w tablicach kontyngencji, wykonano testy statystyczne chi-kwadrat
+```{r}
+# Tabela kontyngencji
+tab <- table(dane$SWALLOWING.DIFFICULTY, dane$ANXIETY)
+print(tab)
+
+# Test chi-kwadrat
+result <- chisq.test(tab)
+print(result)
+```
+Wartość p-value (p < 2.2e-16) sugeruje, że istnieje istotna statystycznie zależność między zmiennymi 0 i 1. Oznacza to, że istnieje prawdopodobieństwo, że różnice między grupami nie są wynikiem przypadku, ale są istotne z punktu widzenia statystyki. Warto więc uwzględnić te zmienne w dalszym badaniu.
+```{r}
+# Tabela kontyngencji
+tab <- table(dane$ALCOHOL.CONSUMING, dane$GENDER)
+print(tab)
+
+# Test chi-kwadrat
+result <- chisq.test(tab)
+print(result)
+```
+Na podstawie wyników testu chi-kwadrat można wnioskować, że konsumowanie alkoholu (0 - nie pije, 1 - pije) różni się istotnie w zależności od płci (0 - kobiety, 1 - mężczyźni).
+Istnieje zależność między tymi zmiennymi, co sugeruje, że płeć może mieć istotny wpływ na zachowania związane z konsumpcją alkoholu. Tak więc te zmienne również pozostawiamy.
+```{r}
+# Tabela kontyngencji
+tab <- table(dane$SHORTNESS.OF.BREATH, dane$FATIGUE)
+print(tab)
+
+# Test chi-kwadrat
+result <- chisq.test(tab)
+print(result)
+```
+Na podstawie wyników testu chi-kwadrat można wnioskować, że występowanie problemów z oddychaniem (SHORTNESS.OF.BREATH) różni się istotnie w zależności od występowania zmęczenia (FATIGUE).
+Istnieje zależność między tymi zmiennymi, co sugeruje, że zmęczenie może mieć istotny wpływ na problemy z oddychaniem.
+
+**Wnioski**
+
+Ze zbioru predyktorów usuwamy:
+*YELLOW_FINGERS z uwagi na zbyt dużą korelację ze zmienną ANXIETY. Zdecydowano się na usunięcie zmiennej YELLOW_FINGERS ze względu na mniejszą istotność w kwestii bezpośrednich przyczyn badania zachorowalności na raka płuc.
+
+###Podział zbioru na uczący i testowy
+
+Stworzyliśmy zbiór uczący i testowy aby ocenić skuteczność później tworzonych modeli na niezależnym zbiorze.
+Zbiór uczący/treningowy (train) służy do budowy modelu, a zbiór testowy (test) służy do oceny modelu. Dokonamy losowego podziału w proporcji: 70% i 30% odpowiednio.Przy każdym wywołaniu funkcji `sample()` otrzymujemy inne zbiory. W celu powtarzalności eksperymentu stosuje się funkcję `set.seed()`, która inicjuje „ziarno” dla generatora liczb losowych - dla ustalonego "ziarna" w każdym momencie i na każdym komputerze otrzymuje się ten sam zestaw liczb losowych. Ustalmy `set.seed()`, abyśmy mogli porównac wyniki.
+
+```{r}
+dane <- dane[,-c(4)]
+set.seed(1257)     #set.seed(NULL) --> usunięcie "ziarna"
+n <- nrow(dane)
+liczby_losowe <- sample(c(1:n), round(0.7*n), replace = FALSE)
+dane_uczacy <- dane[liczby_losowe,]
+dane_testowy <- dane[-liczby_losowe,]
+```
+
+```{r}
+table(dane$LUNG_CANCER)/n
+table(dane_uczacy$LUNG_CANCER)/nrow(dane_uczacy)
+table(dane_testowy$LUNG_CANCER)/nrow(dane_testowy)
+```
+
+Po podziale danych na zbiór uczący i zbiór testowy proporcja osób u których występuje bądź nie występuje ryzyko zachorowania na raka rozkłada się proporcjonalnie we wszystkich zbiorach.
+
+###Analiza obserwacji wpływowych i nietypowych
+```{r}
+dane$LUNG_CANCER <- as.numeric(as.character(dane$LUNG_CANCER))
+dane$GENDER <- as.numeric(as.character(dane$GENDER))
+dane$SMOKING <- as.numeric(as.character(dane$SMOKING))
+dane$ANXIETY <- as.numeric(as.character(dane$ANXIETY))
+dane$PEER_PRESSURE    <- as.numeric(as.character(dane$PEER_PRESSURE))
+dane$CHRONIC.DISEASE <- as.numeric(as.character(dane$CHRONIC.DISEASE))
+dane$FATIGUE<- as.numeric(as.character(dane$FATIGUE))
+dane$ALLERGY <- as.numeric(as.character(dane$ALLERGY))
+dane$WHEEZING    <- as.numeric(as.character(dane$WHEEZING ))
+dane$ALCOHOL.CONSUMING <- as.numeric(as.character(dane$ALCOHOL.CONSUMING))
+dane$COUGHING<- as.numeric(as.character(dane$COUGHING))
+dane$SHORTNESS.OF.BREATH <- as.numeric(as.character(dane$SHORTNESS.OF.BREATH ))
+dane$SWALLOWING.DIFFICULTY    <- as.numeric(as.character(dane$SWALLOWING.DIFFICULTY))
+
+m1<-lm(formula = LUNG_CANCER ~ GENDER + SMOKING + ANXIETY+ PEER_PRESSURE+CHRONIC.DISEASE+FATIGUE+ALLERGY+WHEEZING+ALCOHOL.CONSUMING+COUGHING+SHORTNESS.OF.BREATH+SWALLOWING.DIFFICULTY , data = dane, subset = 1:309)
+summary(m1)
+```
+```{r}
+#obserwacje nietypowe
+plot(m1, which = 1)
+
+```
+```{r}
+#identyfikacja obserwacji wpływowych
+c<- 4/309
+plot(m1, which=4)
+abline(h=c, col="pink", lty=2)
+```
+Wykrycie obserwacji nietypowych za pomocą testu statystycznego 
+**Bonferroni Outlier Test** 
+
+```{r}
+outlierTest(m1, n.max = Inf)
+
+```
+Po uwzględnieniu korekcji Bonferroniego, rstudenta nie jest statystycznie istotna. Oznacza to, że chociaż wydaje się odstająca na podstawie niekorygowanej p-wartości, nie jest na tyle istotna, aby uznać ją za odstającą po korekcji na wielokrotne testowanie.
+Mimo że występuje wysokie rstudenta, nie musimy natychmiast usuwać lub korygować wartości odstających w modelu, ponieważ po uwzględnieniu korekcji Bonferroniego rstudenta nie jest statystycznie istotna. Jednak warto zwrócić na to uwagę i sprawdzić, czy są inne podobne obserwacje w późniejszych etapach tworzenia modelu
+
+
+
+
+
+##Estymacja modelu dwumianowego logitowego
+Estymujemy model dla zmiennej dychotomicznej (binarnej) Y `family = binomial` z domyślną funkcją wiążącą probit `link = logit`
+
+```{r}
+logit0 <- glm(LUNG_CANCER ~ GENDER + SMOKING + ANXIETY+ PEER_PRESSURE+CHRONIC.DISEASE+FATIGUE+ALLERGY+WHEEZING+ALCOHOL.CONSUMING+COUGHING+SHORTNESS.OF.BREATH+SWALLOWING.DIFFICULTY, data = dane_uczacy, family = binomial)
+summary(logit0)
+```
+
+Testy istotności wszystkich zmiennych niezależnych w modelu: test ilorazu wiarygodności lub test Walda.
+```{r}
+library("lmtest") #testy LR i Walda globalne
+lrtest(logit0)
+waldtest(logit0)
+```
+Test ilorazu wiarygodności:
+
+Hipotezy: H0: β1 = β2 = β3 = ... = βi = 0 (wszystkie współczynniki są nieistotne); Ha: Istnieje przynajmniej jedno βi ≠ 0 (przynajmniej jeden współczynnik jest istotny).
+Wynik: p-value = 2.145e-15.
+Interpretacja: Ponieważ p-value jest znacznie mniejsze od poziomu istotności α (np. 0.05), odrzucamy hipotezę zerową. Oznacza to, że zmienne w modelu są istotne statystycznie.
+
+Globalny test Walda:
+
+Hipotezy: H0: β1 = β2 = β3 = ... = βi = 0 (wszystkie współczynniki są nieistotne); Ha: Istnieje przynajmniej jedno βi ≠ 0 (przynajmniej jeden współczynnik jest istotny).
+Wynik: p-value = 0.007252.
+Interpretacja: Ponieważ p-value jest mniejsze od poziomu istotności α (np. 0.05), odrzucamy hipotezę zerową. Oznacza to, że przynajmniej jedna ze zmiennych w modelu jest istotna statystycznie.
+
+Sprawdzenie, czy zmienne objaśniające nie są współliniowe.
+```{r}
+library("car") # funkcja vif()
+vif(logit0)
+```
+VIF - im dalej od 1 tym gorzej, dla modeli logitowych przyjmuje się górną granicę o wartości 2,5. Na podstawie współczynnika VIF badane zmienne: CHRONIC.DISEASE,FATIGUE,WHEEZING, COUSGHING I SWALLOWING DIDDICULTY, wartości VIF powyżej 2,5 sugerują pewien poziom współliniowości, ale niekoniecznie jest to problematyczne. Standardowy próg, powyżej którego zaczyna się martwić o współliniowość, wynosi 10, ale niektórzy analitycy stosują bardziej konserwatywne progi, takie jak 5 lub 2,5. Analiza par skorelowanych zmiennych nie wskazywała na zbytnie skorelowanie.
+
+Estymacja modelu `logit1` metodą krokową przy minimalizacji kryterium informacyjnego AIC. Argument `direction=` "forward" lub "backward" lub "both" (domyślnie) określa metodę krokową. 
+```{r}
+logit1 <- step(logit0)
+summary(logit1)
+```
+
+```{r}
+logit2 <- step(logit0, direction="forward")
+summary(logit2)
+```
+
+```{r}
+logit3 <- step(logit0, direction = "backward")
+summary(logit3)
+```
+Analizując powstałe modele możemy zauważyć, iż modele z argumentami "both" i "backward" dały nam takie same rezultaty. Natomiast model z argumentem "forward" zawiera wszystkie zmienne obiajśniające.
+
+###Porównanie dobroci dopasowania***
+Definiujemy funkcję `ocena_modelu_dwum` do oceny dobroci dopasowania modeli dwumianowych
+```{r}
+ocena_modelu_dwum <- function(model) {
+  kryterium_AIC <- model$aic
+  McFadden<- pR2(model)[4]
+  Cragg_Uhler<- pR2(model)[6]
+  ocena <- data.frame(kryterium_AIC, McFadden, Cragg_Uhler)
+  return(ocena)
+}
+```
+
+Wywołujemy powyższą funkcję dla estymowanych modeli
+```{r}
+library("pscl") #pseudo-R2 funkcja pR2()
+wyniki_oceny_logit <- rbind(
+  model_0=ocena_modelu_dwum(logit0), 
+  model_1=ocena_modelu_dwum(logit1), 
+  model_2=ocena_modelu_dwum(logit2),
+  model_3=ocena_modelu_dwum(logit3))
+wyniki_oceny_logit
+```
+
+**Wnioski**
+Modelem charakteryzującym się najmniejszą wartością kryterium AIC jest model_1 oraz model_3 (AIC = 84.63561). Kryterium McFaddena oraz Cragg Uhlera przyjmuje najlepszą (najwyższą) wartość dla model_0 oraz model_2.Pomimo nieznacznie gorszych ocen kryterium McFaddena oraz Cragg Uhlera, do dalszej analizy wybrano model_1 ze względu na lepsze możliwości interpretacyjne.
+
+Nastęnie przystąpiono do wykonania testów istotności wszystkich zmiennych niezależnych w modelu: test ilorazu wiarygodności oraz test Walda.
+
+```{r}
+lrtest(logit1)
+waldtest(logit1)
+```
+Test ilorazu wiarygodności:
+
+Hipotezy: H0: β1 = β2 = β3 = ... = βi = 0 (wszystkie współczynniki są nieistotne); Ha: Istnieje przynajmniej jedno βi ≠ 0 (przynajmniej jeden współczynnik jest istotny).
+Wynik: p-value = 2.336e-16.
+Interpretacja: Ponieważ p-value jest znacznie mniejsze od poziomu istotności α (np. 0.05), odrzucamy hipotezę zerową. Oznacza to, że zmienne w modelu są istotne statystycznie.
+
+Globalny test Walda:
+
+Hipotezy: H0: β1 = β2 = β3 = ... = βi = 0 (wszystkie współczynniki są nieistotne); Ha: Istnieje przynajmniej jedno βi ≠ 0 (przynajmniej jeden współczynnik jest istotny).
+Wynik: p-value = 0.0007246.
+Interpretacja: Ponieważ p-value jest mniejsze od poziomu istotności α (np. 0.05), odrzucamy hipotezę zerową. Oznacza to, że przynajmniej jedna ze zmiennych w modelu jest istotna statystycznie.
+```{r}
+vif(logit1)
+```
+W porównaiu z modelem (logit0) współczynnik VIF znacząco się obniżył i jedynie w przypadku COUGHING wartość VIF znajduje się ponad górną granicą.
+
+##Estymacja modelu probitowego
+W celu odnalezienia najlepszego wśród modeli wyestymowano model probitowy.
+```{r}
+probit0 <- glm(LUNG_CANCER ~ GENDER + SMOKING + ANXIETY+ PEER_PRESSURE+CHRONIC.DISEASE+FATIGUE+ALLERGY+WHEEZING+ALCOHOL.CONSUMING+COUGHING+SHORTNESS.OF.BREATH+SWALLOWING.DIFFICULTY, data = dane_uczacy,family = binomial(link = "probit")) 
+
+summary(probit0)
+```
+Następnie, podbnie jak w przypadku modelu logitowego wykonano estymację trzema metodami krokowymi.
+```{r}
+probit1 <- step(probit0)
+summary(probit1)
+```
+
+```{r}
+probit2 <- step(probit0, direction = "forward") 
+summary(probit2)
+```
+
+```{r}
+probit3 <- step(probit0, direction = "backward") 
+summary(probit3)
+```
+Analizując powstałe modele możemy zauważyć, iż modele z argumentami "both" i "backward" dały nam takie same rezultaty. Natomiast model z argumentem "forward" zawiera wszystkie zmienne obiajśniające.
+
+###Porównanie dobroci dopasowania modeli probitowych oszacowanych metodą krokową
+Funkcję `ocena_modelu_dwum` do oceny dobroci dopasowania modeli dwumianowych została już wcześniej zdefiniowana
+```{r}
+wyniki_oceny_logit <- rbind(
+  model_0=ocena_modelu_dwum(probit0), 
+  model_1=ocena_modelu_dwum(probit1), 
+  model_2=ocena_modelu_dwum(probit2),
+  model_3=ocena_modelu_dwum(probit3))
+wyniki_oceny_logit
+```
+**Wnioski**
+Modelem charakteryzującym się najmniejszą wartością kryterium AIC jest model_1 oraz model_3 (AIC = 83.62552). Kryterium McFaddena oraz Cragg Uhlera przyjmuje najlepszą (najwyższą) wartość dla model_0 oraz model_2.Pomimo nieznacznie gorszych ocen kryterium McFaddena oraz Cragg Uhlera, do dalszej analizy wybrano model_1 ze względu na lepsze możliwości interpretacyjne.
+
+Dla  modelu probit1 przeprowadzamy testy dla łącznej i indywidualnej istotności parametrów: test ilorazu wiarygodności i test Walda.
+
+```{r}
+lrtest(probit1) 
+waldtest(probit1)
+```
+Test ilorazu wiarygodności:
+
+Hipotezy: H0: β1 = β2 = β3 = ... = βi = 0 (wszystkie współczynniki są nieistotne); Ha: Istnieje przynajmniej jedno βi ≠ 0 (przynajmniej jeden współczynnik jest istotny).
+Wynik: p-value < 2.2e-16
+Interpretacja: Ponieważ p-value jest znacznie mniejsze od poziomu istotności α (np. 0.05), odrzucamy hipotezę zerową. Oznacza to, że zmienne w modelu są istotne statystycznie.
+
+Globalny test Walda:
+
+Hipotezy: H0: β1 = β2 = β3 = ... = βi = 0 (wszystkie współczynniki są nieistotne); Ha: Istnieje przynajmniej jedno βi ≠ 0 (przynajmniej jeden współczynnik jest istotny).
+Wynik: p-value = 0.0001461
+Interpretacja: Ponieważ p-value jest mniejsze od poziomu istotności α (np. 0.05), odrzucamy hipotezę zerową. Oznacza to, że przynajmniej jedna ze zmiennych w modelu jest istotna statystycznie.
+
+Nastęnie przeszliśmy do sprawdzenia, czy zmienne objaśniające nie są współliniowe.
+```{r}
+vif(probit1)
+```
+Na podstawie współczynnika VIF badane zmienne nie wykazują współliniowości.Ponadto jedynie zmienna COUGHING przyjmuje wartość wyższą niż 2,5. 
+
+
+##Porównanie modeli Logit i Probit
+
+W celu porównania oceny jakości predykcji modeli Logit i Probit należy oszacować tablice trafności dla obu tych modeli na zbiorze testowym i uczącym.
+Tablice trafności dla wybranego punktu odcięcia p*
+Niech p* = proporcja z próby uczącej
+```{r}
+p <- table(dane_uczacy$LUNG_CANCER)[2]/nrow(dane_uczacy)
+ 
+cat("Tablica trafności dla modelu logitowego_1 - próba ucząca\n")
+tab_traf <- data.frame(obserwowane=logit1$y, przewidywane=ifelse(logit1$fitted.values>p, 1, 0))
+table(tab_traf)
+ 
+cat("Tablica trafności dla modelu probitowego - próba ucząca\n")
+tab_traf <- data.frame(obserwowane=probit1$y, przewidywane=ifelse(probit1$fitted.values>p, 1, 0))
+table(tab_traf)
+ 
+cat("Tablica trafności dla modelu logitowego - próba testowa\n")
+tab_traf <- data.frame(obserwowane=dane_testowy$LUNG_CANCER, przewidywane=ifelse(predict(logit2, dane_testowy, type = "response")>p, 1, 0))
+table(tab_traf)
+ 
+cat("Tablica trafności dla modelu probitowego - próba testowa\n")
+tab_traf <- data.frame(obserwowane=dane_testowy$LUNG_CANCER, przewidywane=ifelse(predict(probit1, dane_testowy, type = "response")>p, 1, 0))
+table(tab_traf)
+```
+
+### Miary jakości predykcji
+
+Poniższa funkcja `miary_pred` została określona dla argumentów: `model` (model dwumianowy), `dane` (np. zbiór uczący, testowy), `Y` (obserwowany Y 0-1 w analizowanym zbiorze danych).
+```{r}
+miary_pred <- function(model, dane, Y, p = 0.5) {
+  tab <- table(obserwowane = Y, przewidywane = ifelse(predict(model, dane, type = "response") > p, 1, 0))
+  ACC <- (tab[1,1]+tab[2,2])/sum(tab)
+  ER <- (tab[1,2]+tab[2,1])/sum(tab)
+  SENS <- tab[2,2]/(tab[2,2]+tab[2,1])
+  SPEC <- tab[1,1]/(tab[1,1]+tab[1,2])
+  PPV <- tab[2,2]/(tab[2,2]+tab[1,2])
+  NPV <- tab[1,1]/(tab[1,1]+tab[2,1])
+  miary <- data.frame(ACC, ER, SENS, SPEC, PPV, NPV)
+  return(miary)
+}
+```
+
+Ocena zdolności predykcyjnej na zbiorze uczącym:
+
+```{r}
+wyniki_miary_pred <- rbind(
+  model_logit = miary_pred(model = logit1, dane = dane_uczacy,  Y = dane_uczacy$LUNG_CANCER, p), 
+  model_probit = miary_pred(model = probit1, dane = dane_uczacy, Y = dane_uczacy$LUNG_CANCER,  p))
+wyniki_miary_pred
+```
+
+Zliczeniowy R2 (ACC)  
+Model Logit: Udział liczby trafnie sklasyfikowanych jednostek w ogólnej liczbie jednostek wynosi 87,04%. Jest to wynik zadowalający.
+Model Probit: Udział liczby trafnie sklasyfikowanych jednostek w ogólnej liczbie jednostek wynosi 88,89%. Jest to wynik zadowalający.
+
+Wskaźnik błędu (ER) 
+Model Logit: Udział liczby błędnie sklasyfikowanych jednostek w ogólnej liczbie jednostek wynosi 12,96%. Jest to wynik zadowalający.
+Model Probit: Udział liczby błędnie sklasyfikowanych jednostek w ogólnej liczbie jednostek wynosi 11,11%. Jest to wynik zadowalający.
+
+Czułość (SENS)
+Model Logit: Udział liczby trafnie oszacowanych 1 w liczbie wszystkich obserwowanych 1 wynosi 85,79%. Jest to wynik zadowalający.
+Model Probit: Udział liczby trafnie oszacowanych 1 w liczbie wszystkich obserwowanych 1 wynosi 87,37%. Jest to wynik zadowalający.
+
+Swoistość (SPEC)
+Model Logit: Udział liczby trafnie oszacowanych 0 w liczbie wszystkich obserwowanych 0 wynosi 96,15%. Jest to wynik zadowalający.
+Model Probit: Udział liczby trafnie oszacowanych 0 w liczbie wszystkich obserwowanych 0 wynosi 100%. Jest to wynik zadowalający.
+
+Dodatnia zdolność predykcyjna (PPV)
+Model Logit: Udział liczby trafnie oszacowanych 1 w liczbie wszystkich prognozowanych 1 wynosi 99,39%. Jest to wynik zadowalający.
+Model Probit: Udział liczby trafnie oszacowanych 1 w liczbie wszystkich prognozowanych 1 wynosi 100%. Jest to wynik zadowalający.
+
+Ujemna zdolność predykcyjna (NPV)
+Model Logit: Udział liczby trafnie oszacowanych 0 w liczbie wszystkich prognozowanych 0 wynosi 47,08%. Nie jest to do końca zadowalający wynik.
+Model Probit: Udział liczby trafnie oszacowanych 0 w liczbie wszystkich prognozowanych 0 wynosi 52%. Nie jest to do końca zadowalający wynik.
+
+
+Ocena zdolności predykcyjnej na zbiorze testowym
+
+```{r}
+wyniki_miary_pred <- rbind(
+  model_logit = miary_pred(model = logit1, dane = dane_testowy,  Y = dane_testowy$LUNG_CANCER, p), 
+  model_probit = miary_pred(model = probit1, dane = dane_testowy, Y = dane_testowy$LUNG_CANCER, p))
+wyniki_miary_pred
+```
+
+Zliczeniowy R2 (ACC)  
+Model Logit: Udział liczby trafnie sklasyfikowanych jednostek w ogólnej liczbie jednostek wynosi 82,80%. Jest to wynik zadowalający.
+Model Probit: Udział liczby trafnie sklasyfikowanych jednostek w ogólnej liczbie jednostek wynosi 79,57%. Jest to wynik zadowalający.
+
+Wskaźnik błędu (ER) 
+Model Logit: Udział liczby błędnie sklasyfikowanych jednostek w ogólnej liczbie jednostek wynosi 17,20%. Jest to wynik zadowalający.
+Model Probit: Udział liczby błędnie sklasyfikowanych jednostek w ogólnej liczbie jednostek wynosi 20,43%. Jest to wynik zadowalający.
+
+Czułość (SENS)
+Model Logit: Udział liczby trafnie oszacowanych 1 w liczbie wszystkich obserwowanych 1 wynosi 82,50%. Jest to wynik zadowalający.
+Model Probit: Udział liczby trafnie oszacowanych 1 w liczbie wszystkich obserwowanych 1 wynosi 78,75%. Jest to wynik zadowalający.
+
+Swoistość (SPEC)
+Model Logit: Udział liczby trafnie oszacowanych 0 w liczbie wszystkich obserwowanych 0 wynosi 84,62%. Jest to wynik zadowalający.
+Model Probit: Udział liczby trafnie oszacowanych 0 w liczbie wszystkich obserwowanych 0 wynosi 84,62%. Jest to wynik zadowalający.
+
+Dodatnia zdolność predykcyjna (PPV)
+Model Logit: Udział liczby trafnie oszacowanych 1 w liczbie wszystkich prognozowanych 1 wynosi 97,06%. Jest to wynik zadowalający.
+Model Probit: Udział liczby trafnie oszacowanych 1 w liczbie wszystkich prognozowanych 1 wynosi 96,92%. Jest to wynik zadowalający.
+
+Ujemna zdolność predykcyjna (NPV)
+Model Logit: Udział liczby trafnie oszacowanych 0 w liczbie wszystkich prognozowanych 0 wynosi 44%. Nie jest to do końca zadowalający wynik.
+Model Probit: Udział liczby trafnie oszacowanych 0 w liczbie wszystkich prognozowanych 0 wynosi 39,29%. Nie jest to do końca zadowalający wynik.
+
+
+Na podstawie powyższych miar jakości predykcji można stwierdzić, że nie występują między nimi duże różnice, więc możemy kierować sie subiektywną opinią.
+
+Nastąpił spadek wszytkich miar oprócz wskaźnika błędu. Jednak w przypadku tej miary oczekujemy wartości jak najniższych. Spadki nie sa bardzo duże, oba modele są przydatne. 
+
+
+### Krzywa ROC
+
+Krzywa ROC prezentuje jeakość predykcji modelu dla wszystkich możliwych punktów odcięcia p* 
+
+krzywa czerwona - ROC wyznaczona na zbiorze uczącym
+
+krzywa niebieska - ROC wyznaczona na zbiorze testowym
+```{r}
+rocobj1 <- roc(logit1$y, logit1$fitted.values)
+rocobj1_t <- roc(dane_testowy$LUNG_CANCER, predict(logit1, dane_testowy, type = "response"))
+plot(rocobj1, main = "krzywe ROC dla modelu logitowego", col="red")
+lines(rocobj1_t, col="blue")
+
+rocobj2 <- roc(probit1$y, probit1$fitted.values)
+rocobj2_t <- roc(dane_testowy$LUNG_CANCER, predict(probit1, dane_testowy, type = "response"))
+plot(rocobj2, main = "krzywe ROC dla modelu probitowego", col="red")
+lines(rocobj2_t, col="blue")
+```
+
+Pole powierzchni pod krzywą ROC
+```{r message=FALSE}
+cat("AUC dla zbioru uczącego\n")
+auc(rocobj1)
+auc(rocobj2)
+cat("\nAUC dla zbioru testowego\n")
+auc(rocobj1_t)
+auc(rocobj2_t)
+```
+Wykresy krzywej ROC dla obu analizowanych modeli są dosyć podobne. Wartości pól pod krzywą ROC również są podobne.Na podstawie pola pod krzywą ROC można stwierdzić, że jokść predykcji w przypadku obu modeli jest zadowalająca.
+
+
+Na podstawie wszytkich przeanalizowanych miar predykcji ciężko stwierdzić, który model jest lepszy. Zarówno wyniki w tablicy trafności jak i wartośc pola pod krzywą ROC uzyskują bardzo podbne wyniki. Podjęto decyzje o interpretacji modelu logitowego ze wzgledu na delikatnie lepsze wyniki.
